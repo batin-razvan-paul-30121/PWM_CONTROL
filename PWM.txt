@@ -1,0 +1,96 @@
+//#include <avr/io.h>
+//#include <avr/interrupt.h>
+
+int ms=0, adc_l, adc_h, poz=0, value;
+void display(char p, char c)
+{
+ PORTA &= 0b11110000;
+ PORTC &= 0b00000000;
+
+  switch(c){
+     case 0: PORTC|=0b00111111; break;
+     case 1: PORTC|=0b00000110; break;
+     case 2: PORTC|=0b01011011; break;
+     case 3: PORTC|=0b01001111; break;
+     case 4: PORTC|=0b01100110; break;
+     case 5: PORTC|=0b01101101; break;
+     case 6: PORTC|=0b01111101; break;
+     case 7: PORTC|=0b00000111; break;
+     case 8: PORTC|=0b01111111; break;
+     case 9: PORTC|=0b01101111; break;
+  }
+  switch(p){
+      case 4: PORTA|=0b00000001; break;
+      case 3: PORTA|=0b00000010; break;
+      case 2: PORTA|=0b00000100; break;
+      case 1: PORTA|=0b00001000; break;
+  }
+  // Delay_ms(1); // #include <util/delay.h>
+}
+
+void init_adc()
+{
+  ADMUX = 0b01000000;  //setam ca referinta AVCC (cu pinii 6 si 7) si canalul de conversie e 0  (il setam mai tarziu)
+  ADCSRA= 0b10000111;  //setam prescalerul si activam convertorul
+}
+
+int readADC(char ch)
+{
+  ADMUX &= 0b11100000;   //resetam canalul de conversie
+  ADMUX |= ch;    //setam canalul de conversie dorit
+  ADCSRA|=(1<<6);  //pornim conversia prin ((e bit din registru)ADSC->ad start conversion)
+    while(ADCSRA&(1<<6)); //verificam daca inca se mai face conversia(cand pinul 6 e pe 0 e gata)
+  adc_l = ADCL; //<-adcl contine primii 8 cei mai putin semnificativi biti ai rezultatului
+  adc_h = ADCH;  //<-adch contine primii 2 cei mai semnificativi biti ai rezultatului
+  return (adc_h << 8) | adc_l;        //construim rezultatul pe 10 biti folosind doua rezultate pe 8 (din analog in digital)
+}          //cand e gata conversia, ADSC e curatat automat de catre hard
+
+
+void init_timer()
+{
+        TCCR0 = 0b00001011;  //timer cu normal function(doar numara)  cu prescaler de 64 biti
+        TCNT0 = 0;
+        OCR0  = 124;   //cum avem N=64, vom numara pana la 125 si vom porni output compare  (8000/64) (intrerupere)
+        TIMSK|= 0b00000010;  //activeaza intreruperea de Output Compare Match (comparare la iesire)  (de pe data sheet)
+}               //timer mask
+//per total, o data la 8 milisec avem o intrerupere si astfel afisam pe 7 segments
+
+
+void init_PWM(){
+  DDRD |=1<<7;        //PD7 - output de la pwm
+  TCCR2 = 0b01101111;  //fast pwm cu prescaler
+  OCR2 = 128;         //factor de umplere 50%   (merge intre 0-255)
+}
+
+//ISR
+void ISR_Timer0() iv IVT_ADDR_TIMER0_COMP ics ICS_AUTO {    //ISR<-interrupt service routine
+
+        poz++; //numaram cate intreruperi avem si afisam cate un digit pe fiecare display din 7 segments
+        switch(poz){        //tine cont la care digit suntem pe 7 segments
+                case 1: display(1,value%10);break;
+                case 2: display(2,(value/10)%10);break;
+                case 3: display(3,(value/100)%10);break;
+                case 4: display(4,(value/1000)%10); poz=0;break;
+                }
+
+                if (ms==100){    //daca i 100, citim ADC pinu 6 din readADC()
+                   value = (readADC(6)/4);    //stocam ce am citit in OCR2 //vrem sa ne ramana valoarea intre 0-255 in loc de 0-1023
+                   OCR2 = value;              //apoi in functie de ocr2, setam factoru de umplere(care initial era 50%)
+                   ms=0;
+                }
+                else ms++;
+}
+
+void main(){
+  DDRA = 0b00001111;  //seteaza pinii de iesire
+  DDRC = 0b01111111;
+
+  init_adc();
+  init_timer();
+  init_PWM();
+  SREG |= 1<<7;            //activeaza intreruperile globale
+
+    for(;;){
+    }          //totul se intampla in isr, odata la 1 ms cand oc0=timer0 si updateaza adc value
+               //afiseaza si 4 digits pe 7 segments care se refreshuie odata la 4 ms(pare ca s deodata pe display)
+}              //displayu e multiplexat, deci doar o valoare poate aparea odata pe un display
